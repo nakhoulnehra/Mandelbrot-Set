@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
-#include <time.h>
 
 #define WIDTH 640
 #define HEIGHT 480
@@ -12,7 +11,6 @@ struct complex{
   double imag;
 };
 
-// Function to calculate pixel value for the Mandelbrot set
 int cal_pixel(struct complex c) {
     double z_real = 0;
     double z_imag = 0;
@@ -32,19 +30,18 @@ int cal_pixel(struct complex c) {
     return iter;
 }
 
-// Function to save the image as a PGM file
 void save_pgm(const char *filename, int image[HEIGHT][WIDTH]) {
     FILE* pgmimg; 
     int temp;
     pgmimg = fopen(filename, "wb"); 
-    fprintf(pgmimg, "P2\n"); // Writing Magic Number to the File   
-    fprintf(pgmimg, "%d %d\n", WIDTH, HEIGHT);  // Writing Width and Height
-    fprintf(pgmimg, "255\n");  // Writing the maximum gray value 
+    fprintf(pgmimg, "P2\n");
+    fprintf(pgmimg, "%d %d\n", WIDTH, HEIGHT);
+    fprintf(pgmimg, "255\n");
     
     for (int i = 0; i < HEIGHT; i++) { 
         for (int j = 0; j < WIDTH; j++) { 
             temp = image[i][j]; 
-            fprintf(pgmimg, "%d ", temp); // Writing the gray values in the 2D array to the file 
+            fprintf(pgmimg, "%d ", temp);
         } 
         fprintf(pgmimg, "\n"); 
     } 
@@ -53,43 +50,44 @@ void save_pgm(const char *filename, int image[HEIGHT][WIDTH]) {
 
 int main(int argc, char *argv[]) {
     int rank, size;
-    int num_trials = 10; // number of trials
+    int num_trials = 10;
     double average_time = 0;
     double trial_times[num_trials];
     struct complex c;
 
-    // Initialize MPI
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // Declare image array for Mandelbrot set
-    int image[HEIGHT][WIDTH];
+    int (*image)[WIDTH] = malloc(HEIGHT * sizeof(*image));
+    int (*local_image)[WIDTH] = malloc(HEIGHT * sizeof(*local_image));
 
-    // Loop over the trials
     for (int trial = 0; trial < num_trials; trial++) {
         double start_time, end_time;
         
-        MPI_Barrier(MPI_COMM_WORLD); // Synchronize processes before timing starts
+        for (int i = 0; i < HEIGHT; i++) {
+            for (int j = 0; j < WIDTH; j++) {
+                local_image[i][j] = 0;
+            }
+        }
+        
+        MPI_Barrier(MPI_COMM_WORLD);
         start_time = MPI_Wtime();
 
-        // Dynamic work assignment: workers request rows until all rows are computed
         int row = rank;
         while (row < HEIGHT) {
-            // Compute the Mandelbrot set for the row assigned to this process
             for (int col = 0; col < WIDTH; col++) {
                 c.real = (col - WIDTH / 2.0) * 4.0 / WIDTH;
                 c.imag = (row - HEIGHT / 2.0) * 4.0 / HEIGHT;
-                image[row][col] = cal_pixel(c);
+                local_image[row][col] = cal_pixel(c);
             }
-
-            // Move to the next row
-            row += size; // Each process gets every "size"-th row
+            row += size;
         }
+
+        MPI_Reduce(local_image, image, HEIGHT * WIDTH, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
         end_time = MPI_Wtime();
 
-        // Only rank 0 prints the execution time
         if (rank == 0) {
             trial_times[trial] = end_time - start_time;
             printf("Execution time of trial [%d]: %f seconds\n", trial + 1, trial_times[trial]);
@@ -97,13 +95,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Rank 0 saves the image and prints the average execution time
     if (rank == 0) {
-        save_pgm("mandelbrot_parallel.pgm", image); // Save the final image after gathering results
+        save_pgm("mandelbrot_parallel.pgm", image);
         printf("The average execution time of %d trials is: %f seconds\n", num_trials, average_time / num_trials);
     }
 
-    // Finalize MPI
+    free(image);
+    free(local_image);
     MPI_Finalize();
     return 0;
 }
