@@ -81,7 +81,7 @@ int main() {
     }
 
     save_pgm("mandelbrot.pgm", image);
-    printf("The average execution time of 10 trials is: %f ms", AVG/N*1000);
+    printf("The average execution time of 10 trials is: %f ms\n", AVG/N*1000);
 
     
 
