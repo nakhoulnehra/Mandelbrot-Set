@@ -58,38 +58,44 @@ int main(int argc, char *argv[]) {
     double trial_times[num_trials];
     struct complex c;
 
-    // Initialize MPI
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // Declare image array for Mandelbrot set
     int image[HEIGHT][WIDTH];
 
     // Loop over the trials
     for (int trial = 0; trial < num_trials; trial++) {
         double start_time, end_time;
         
-        MPI_Barrier(MPI_COMM_WORLD); // Synchronize processes before timing starts
+        MPI_Barrier(MPI_COMM_WORLD); 
         start_time = MPI_Wtime();
 
-        // Dynamic work assignment: workers request rows until all rows are computed
-        int row = rank;
-        while (row < HEIGHT) {
-            // Compute the Mandelbrot set for the row assigned to this process
+        int rows_per_worker = HEIGHT / size;
+        int start_row = rank * rows_per_worker;
+        int end_row = (rank == size - 1) ? HEIGHT : start_row + rows_per_worker;
+
+        for (int row = start_row; row < end_row; row++) {
             for (int col = 0; col < WIDTH; col++) {
                 c.real = (col - WIDTH / 2.0) * 4.0 / WIDTH;
                 c.imag = (row - HEIGHT / 2.0) * 4.0 / HEIGHT;
                 image[row][col] = cal_pixel(c);
             }
-
-            // Move to the next row
-            row += size; // Each process gets every "size"-th row
+        }
+        
+        // Send calculated rows to rank 0 
+        if (rank != 0) {
+            MPI_Send(&image[start_row][0], (end_row - start_row) * WIDTH, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        } else {
+            for (int worker_rank = 1; worker_rank < size; worker_rank++) {
+                int worker_start_row = worker_rank * rows_per_worker;
+                int worker_end_row = (worker_rank == size - 1) ? HEIGHT : worker_start_row + rows_per_worker;
+                MPI_Recv(&image[worker_start_row][0], (worker_end_row - worker_start_row) * WIDTH, MPI_INT, worker_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
         }
 
         end_time = MPI_Wtime();
 
-        // Only rank 0 prints the execution time
         if (rank == 0) {
             trial_times[trial] = end_time - start_time;
             printf("Execution time of trial [%d]: %f seconds\n", trial + 1, trial_times[trial]);
@@ -99,11 +105,10 @@ int main(int argc, char *argv[]) {
 
     // Rank 0 saves the image and prints the average execution time
     if (rank == 0) {
-        save_pgm("mandelbrot_parallel.pgm", image); // Save the final image after gathering results
-        printf("The average execution time of %d trials is: %f seconds\n", num_trials, average_time / num_trials);
+        save_pgm("mandelbrot_parallel.pgm", image); 
+        printf("The average execution time of %d trials is: %f ms\n", num_trials, (average_time / num_trials) * 1000);
     }
 
-    // Finalize MPI
     MPI_Finalize();
     return 0;
 }
